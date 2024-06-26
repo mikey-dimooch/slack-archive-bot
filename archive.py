@@ -27,15 +27,17 @@ def join_channel(channel_id):
 def fetch_messages(channel_id, start_time=None, end_time=None):
     messages = []
     try:
-        # For initial debugging, we fetch messages without time restrictions
         if start_time and end_time:
             response = client.conversations_history(channel=channel_id, oldest=start_time, latest=end_time)
         else:
             response = client.conversations_history(channel=channel_id)
 
-        messages.extend(response['messages'])
-        logging.debug(f"Fetched {len(response['messages'])} messages from channel {channel_id}.")
-        logging.debug(f"Messages: {response['messages']}")
+        if not response['ok']:
+            logging.error(f"Error in fetching messages: {response['error']}")
+        else:
+            messages.extend(response['messages'])
+            logging.debug(f"Fetched {len(response['messages'])} messages from channel {channel_id}.")
+            logging.debug(f"Messages: {response['messages']}")
     except SlackApiError as e:
         logging.error(f"Error fetching messages from {channel_id}: {e.response['error']}")
     return messages
@@ -74,14 +76,42 @@ def open_dm_channel(user_id):
         logging.error(f"Error opening DM channel with user {user_id}: {e.response['error']}")
         return None
 
+def get_user_name(user_id):
+    try:
+        response = client.users_info(user=user_id)
+        if response["ok"]:
+            return response["user"]["real_name"]
+        else:
+            logging.error(f"Error fetching user info for {user_id}: {response['error']}")
+            return user_id
+    except SlackApiError as e:
+        logging.error(f"Error fetching user info for {user_id}: {e.response['error']}")
+        return user_id
+
+def get_workspace_name():
+    try:
+        response = client.team_info()
+        if response["ok"]:
+            return response['team']['name']
+        else:
+            logging.error(f"Error fetching workspace info: {response['error']}")
+            return "workspace"
+    except SlackApiError as e:
+        logging.error(f"Error fetching workspace info: {e.response['error']}")
+        return "workspace"
+
 def archive_messages():
     now = datetime.datetime.now()
     first_day_of_current_month = now.replace(day=1)
     last_month_end = first_day_of_current_month - datetime.timedelta(seconds=1)
     last_month_start = last_month_end.replace(day=1)
 
-    start_time = last_month_start.timestamp()
-    end_time = last_month_end.timestamp()
+    # For debugging, set start_time and end_time to a recent period
+    start_time = (now - datetime.timedelta(days=10)).timestamp()
+    end_time = now.timestamp()
+
+    # start_time = last_month_start.timestamp()
+    # end_time = last_month_end.timestamp()
 
     logging.info("Fetching channels...")
     channels = fetch_all_channels()
@@ -93,25 +123,27 @@ def archive_messages():
         logging.info(f"Ensuring membership in channel: {channel_name}")
         join_channel(channel_id)
         logging.info(f"Fetching messages from channel: {channel_name}")
-        messages = fetch_messages(channel_id)
+        messages = fetch_messages(channel_id, start_time, end_time)
         for message in messages:
             date_time = datetime.datetime.fromtimestamp(float(message['ts']))
             user = message.get('user', 'N/A')
             text = message.get('text', 'N/A')
             files = message.get('files', [])
+            user_name = get_user_name(user)
             if files:
                 for file in files:
                     file_path = download_file(file)
-                    all_messages.append([date_time.date(), date_time.time(), user, file['name'], channel_name])
+                    all_messages.append([date_time.strftime('%m-%d-%Y'), date_time.strftime('%H:%M'), user_name, file['name'], channel_name])
             else:
-                all_messages.append([date_time.date(), date_time.time(), user, text, channel_name])
+                all_messages.append([date_time.strftime('%m-%d-%Y'), date_time.strftime('%H:%M'), user_name, text, channel_name])
             logging.debug(f"Processed message: {message}")
 
     logging.debug(f"Total messages fetched: {len(all_messages)}")
     
     if all_messages:
         df = pd.DataFrame(all_messages, columns=['Date', 'Time', 'User', 'Message', 'Channel'])
-        file_name = f"slack_archive_{last_month_start.strftime('%Y_%m')}.csv"
+        workspace_name = get_workspace_name()
+        file_name = f"{workspace_name}_{last_month_start.strftime('%Y_%m')}.csv"
         df.to_csv(file_name, index=False)
         logging.info(f"CSV file {file_name} created successfully.")
 
