@@ -1,4 +1,4 @@
-#Slack Archiving Bot
+Slack Archiving Bot
 Overview
 The Slack Archiving Bot is a Python script that automatically archives messages from all channels in a Slack workspace and stores them in a CSV file. The CSV file is then sent to a specified user via a direct message (DM) on Slack. This script is scheduled to run daily and perform the archiving task on the first day of each month.
 Features
