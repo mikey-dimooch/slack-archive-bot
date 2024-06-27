@@ -8,7 +8,7 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 import requests
 
-
+port = int(os.environ.get("PORT", 5000))
 # Initialize logging
 logging.basicConfig(level=logging.DEBUG)
 
