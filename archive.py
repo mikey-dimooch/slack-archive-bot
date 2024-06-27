@@ -110,6 +110,8 @@ def archive_messages():
     start_time = (now - datetime.timedelta(days=10)).timestamp()
     end_time = now.timestamp()
 
+
+    # uncomment these when ready to run 
     # start_time = last_month_start.timestamp()
     # end_time = last_month_end.timestamp()
 
