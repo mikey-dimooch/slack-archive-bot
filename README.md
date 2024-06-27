@@ -88,6 +88,20 @@ The script logs all operations, which can help in debugging and monitoring the p
 - **Error uploading file:** Check the logs for specific Slack API errors and ensure the bot has the `files:write` permission.
 - **Bot not joining channels:** Ensure the bot has the `channels:join` and `groups:read` permissions.
 
+## Testing
+Paste these into your powershell
+ - Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
+
+ - python -m venv slack_bot_env
+slack_bot_env\Scripts\activate
+
+ - $env:SLACK_BOT_TOKEN="xoxb-123456789012-123456789012-ABCDEFGHIJKLMNO"
+ - $env:SLACK_ARCHIVE_USER_ID="U12345678"
+
+  Run
+ - python archive.py
+
+
 ## Contributing
 Contributions are welcome! Please create a pull request or open an issue for any improvements or bug fixes.
 
