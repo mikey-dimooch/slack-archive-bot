@@ -7,8 +7,8 @@ import logging
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 import requests
+import zipfile
 
-port = int(os.environ.get("PORT", 5000))
 # Initialize logging
 logging.basicConfig(level=logging.DEBUG)
 
@@ -55,15 +55,26 @@ def fetch_all_channels():
         logging.error(f"Error fetching channels: {e.response['error']}")
     return channels
 
-def download_file(file_info):
-    url = file_info['url_private']
+def download_file(file_info, date_time, user_name):
+    formatted_time = date_time.strftime('%Y-%m-%d_%H-%M')
+    file_name = f"{formatted_time}_{user_name}_{file_info['name']}"
+    file_path = os.path.join("media", file_name)
+
+    if not os.path.exists(os.path.dirname(file_path)):
+        os.makedirs(os.path.dirname(file_path))
+
     headers = {'Authorization': 'Bearer ' + os.getenv('SLACK_BOT_TOKEN')}
-    response = requests.get(url, headers=headers)
-    file_path = os.path.join("media", file_info['name'])
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    with open(file_path, 'wb') as f:
-        f.write(response.content)
-    return file_path
+    response = requests.get(file_info['url_private'], headers=headers, stream=True)
+
+    if response.status_code == 200:
+        with open(file_path, 'wb') as f:
+            for chunk in response.iter_content(1024):
+                f.write(chunk)
+        logging.info(f"File downloaded successfully: {file_path}")
+        return file_path
+    else:
+        logging.error(f"Failed to download file: {response.status_code} - {response.text}")
+        return None
 
 def open_dm_channel(user_id):
     try:
@@ -101,81 +112,89 @@ def get_workspace_name():
         logging.error(f"Error fetching workspace info: {e.response['error']}")
         return "workspace"
 
+def zip_media_files(files_to_zip):
+    media_directory = "media"  # Define the media directory
+    if not os.path.exists(media_directory):
+        os.makedirs(media_directory)  # Create the media directory if it does not exist
+
+    zip_filename = "media_files.zip"
+    zip_path = os.path.join(media_directory, zip_filename)
+
+    with zipfile.ZipFile(zip_path, 'w') as zipf:
+        for file_path in files_to_zip:
+            arcname = os.path.basename(file_path)
+            zipf.write(file_path, arcname=arcname)
+    return zip_path
+
 def archive_messages():
     now = datetime.datetime.now()
     first_day_of_current_month = now.replace(day=1)
     last_month_end = first_day_of_current_month - datetime.timedelta(seconds=1)
     last_month_start = last_month_end.replace(day=1)
 
-    # For debugging, set start_time and end_time to a recent period
-    
+    # Use accurate timestamps for the last month
     start_time = (now - datetime.timedelta(days=30)).timestamp()
     end_time = now.timestamp()
-
-
-    # uncomment these when ready to run 
-    #start_time = last_month_start.timestamp()
-    #end_time = last_month_end.timestamp()
 
     logging.info("Fetching channels...")
     channels = fetch_all_channels()
     all_messages = []
+    files_to_zip = []
 
     for channel in channels:
         channel_id = channel['id']
         channel_name = channel['name']
-        logging.info(f"Ensuring membership in channel: {channel_name}")
         join_channel(channel_id)
-        logging.info(f"Fetching messages from channel: {channel_name}")
         messages = fetch_messages(channel_id, start_time, end_time)
         for message in messages:
             date_time = datetime.datetime.fromtimestamp(float(message['ts']))
             user = message.get('user', 'N/A')
-            text = message.get('text', 'N/A')
+            text = message.get('text', 'N/A')  # Default to 'N/A' if no text is present
             files = message.get('files', [])
             user_name = get_user_name(user)
+            file_paths = []
+
             if files:
                 for file in files:
-                    file_path = download_file(file)
-                    all_messages.append([date_time.strftime('%m-%d-%Y'), date_time.strftime('%H:%M'), user_name, file['name'], channel_name])
+                    file_path = download_file(file, date_time, user_name)
+                    file_paths.append(file_path)  # Collect file paths to zip later
+                    files_to_zip.append(file_path)  # Add the file path to the list for zipping
             else:
-                all_messages.append([date_time.strftime('%m-%d-%Y'), date_time.strftime('%H:%M'), user_name, text, channel_name])
-            logging.debug(f"Processed message: {message}")
+                file_paths.append('No File')  # Indicate no file in the file path list for this message
 
-    logging.debug(f"Total messages fetched: {len(all_messages)}")
-    
+            # Append a list containing message details, whether or not files are present
+            all_messages.append([
+                date_time.strftime('%m-%d-%Y'), date_time.strftime('%H:%M'), 
+                user_name, text, channel_name, ', '.join(file_paths)
+            ])
+
     if all_messages:
-        df = pd.DataFrame(all_messages, columns=['Date', 'Time', 'User', 'Message', 'Channel'])
+        df = pd.DataFrame(all_messages, columns=['Date', 'Time', 'User', 'Message', 'Channel', 'File Path'])
         workspace_name = get_workspace_name()
         file_name = f"{workspace_name}_{last_month_start.strftime('%Y_%m')}.csv"
         df.to_csv(file_name, index=False)
-        logging.info(f"CSV file {file_name} created successfully.")
+        # Create a zip file of only the relevant media files
+        zip_path = zip_media_files(files_to_zip)  
 
-        # Send the file via DM using files_upload_v2
+        # Send CSV and zip file via Slack DM
         user_id = os.getenv('SLACK_ARCHIVE_USER_ID')
         dm_channel_id = open_dm_channel(user_id)
         if dm_channel_id:
             try:
+                # Send CSV
                 with open(file_name, "rb") as file_content:
-                    upload_response = client.files_upload_v2(
-                        file=file_content,
-                        filename=file_name,
-                        title=file_name,
-                        initial_comment="Here is the monthly archive.",
-                        channel=dm_channel_id
-                    )
-                logging.info(f"Archive file {file_name} sent to user {user_id} via channel {dm_channel_id}")
+                    client.files_upload_v2(file=file_content, filename=file_name, title=file_name, initial_comment="Monthly archive CSV.", channel=dm_channel_id)
+                # Send zip file
+                with open(zip_path, "rb") as zip_content:
+                    client.files_upload_v2(file=zip_content, filename=os.path.basename(zip_path), title="Media files archive.", initial_comment="Attached zip file contains all media files from the specified month.", channel=dm_channel_id)
             except SlackApiError as e:
-                logging.error(f"Error uploading file: {e.response['error']}")
-    else:
-        logging.info("No messages fetched, skipping CSV creation.")
-
+                logging.error(f"Error uploading files: {e.response['error']}")
 def run_manual_test():
     logging.info("Running manual test...")
     archive_messages()
 
 def schedule_monthly_task():
-    if datetime.datetime.now().day == 1:
+    if datetime.now().day == 1:
         archive_messages()
 
 if __name__ == "__main__":
