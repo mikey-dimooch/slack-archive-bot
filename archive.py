@@ -109,13 +109,13 @@ def archive_messages():
 
     # For debugging, set start_time and end_time to a recent period
     
-    #start_time = (now - datetime.timedelta(days=10)).timestamp()
-    #end_time = now.timestamp()
+    start_time = (now - datetime.timedelta(days=30)).timestamp()
+    end_time = now.timestamp()
 
 
     # uncomment these when ready to run 
-    start_time = last_month_start.timestamp()
-    end_time = last_month_end.timestamp()
+    #start_time = last_month_start.timestamp()
+    #end_time = last_month_end.timestamp()
 
     logging.info("Fetching channels...")
     channels = fetch_all_channels()
