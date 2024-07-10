@@ -8,12 +8,17 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 import requests
 import zipfile
+import pytz  # Import pytz for timezone handling
 
 # Initialize logging
 logging.basicConfig(level=logging.DEBUG)
 
 # Initialize the Slack client
 client = WebClient(token=os.getenv('SLACK_BOT_TOKEN'))
+
+# Define your timezone, for example, 'America/New_York'
+TIMEZONE = 'America/Chicago'
+local_tz = pytz.timezone(TIMEZONE)
 
 def join_channel(channel_id):
     try:
@@ -127,7 +132,7 @@ def zip_media_files(files_to_zip):
     return zip_path
 
 def archive_messages():
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(local_tz)
     first_day_of_current_month = now.replace(day=1)
     last_month_end = first_day_of_current_month - datetime.timedelta(seconds=1)
     last_month_start = last_month_end.replace(day=1)
@@ -147,7 +152,7 @@ def archive_messages():
         join_channel(channel_id)
         messages = fetch_messages(channel_id, start_time, end_time)
         for message in messages:
-            date_time = datetime.datetime.fromtimestamp(float(message['ts']))
+            date_time = datetime.datetime.fromtimestamp(float(message['ts']), local_tz)
             user = message.get('user', 'N/A')
             text = message.get('text', 'N/A')  # Default to 'N/A' if no text is present
             files = message.get('files', [])
@@ -189,20 +194,22 @@ def archive_messages():
                     client.files_upload_v2(file=zip_content, filename=os.path.basename(zip_path), title="Media files archive.", initial_comment="Attached zip file contains all media files from the specified month.", channel=dm_channel_id)
             except SlackApiError as e:
                 logging.error(f"Error uploading files: {e.response['error']}")
+
 def run_manual_test():
     logging.info("Running manual test...")
     archive_messages()
 
 def schedule_monthly_task():
-    if datetime.now().day == 1:
+    now = datetime.datetime.now(local_tz)
+    if now.day == 1 and now.hour == 0:
         archive_messages()
 
 if __name__ == "__main__":
     # Uncomment the next line to run a manual test
-    run_manual_test()
+    # run_manual_test()
 
-    # Schedule the task to run daily and check for the first day of the month
-    schedule.every().day.at("00:00").do(schedule_monthly_task)
+    # Schedule the task to run every hour and check for the first day of the month at midnight
+    schedule.every().hour.at(":00").do(schedule_monthly_task)
 
     while True:
         schedule.run_pending()
